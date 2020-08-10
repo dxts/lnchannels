@@ -1,23 +1,19 @@
 import functools
-import networkx as nx
-from graphx import add_edge
+from graph import Graph, Node, Edge
 from node import NodeInfo, ChannelInfo
 
 
-def channel_selection(g: nx.MultiGraph, n: int, const_amt: int):
-    new_node = g.add_node(g.order(), data=NodeInfo.init_random())
+def channel_selection(g: Graph, n: int, const_amt: int):
+    new_node = Node(len(g.nodes), NodeInfo.init_random())
 
-    selected_edges = []
-
-    while len(selected_edges) < n:
+    while len(new_node.edges) < n:
         max_reward = 0
-        selected_node = None
+        selected_node: Node = None
         maximised_fee: ChannelInfo = None
 
         # try all channels
         for node in g.nodes:
             # create new channel
-            add_edge(g, new_node, node)
             edge = g.add_edge_from(new_node, node)
             # calculate max reward
             reward = maximise_fee(
