@@ -57,7 +57,7 @@ class ChannelInfo:
 
     default_base_fee = 1
     default_prop_fee_millionth = 1
-    default_capacity = 1000
+    default_capacity = 100000
 
     def __init__(self, capacity: int, base_fee: int, prop_fee_millionth: int, cltv_delta: int):
         self.capacity = capacity
@@ -67,7 +67,33 @@ class ChannelInfo:
 
     @classmethod
     def init_random(cls):
-        return ChannelInfo(100000, 1, 1, 144)
+        capacity = 100000 * (1.5 - random.random())
+        base_fee = random.choices([cls.default_base_fee, 0, random.random(), random.random()*30],
+                                  [0.45, 0.25, 0.2, 0.1], k=1)[0]
+        return ChannelInfo(cls.default_capacity, cls.default_base_fee, 1, 144)
+
+    @classmethod
+    def check_channel_fees(cls):
+        import requests
+        from collections import Counter
+
+        res = requests.get(
+            'https://ln.bigsun.xyz/api/policies?select=base_fee_millisatoshi')
+
+        print(res.status_code)
+
+        base_fees = list(map(
+            lambda node: node['base_fee_millisatoshi'],
+            res.json()))
+
+        fees = Counter(base_fees).keys()
+        freq = Counter(base_fees).values()
+
+        # change freq to fraction of total
+        total = sum(freq)
+        freq = list(map(lambda f: f/total, freq))
+
+        print(fees, freq, sep='\n')
 
     def calc_weight(self, amt: int):
         return self.base_fee + (amt / 1000000) * self.prop_fee

@@ -209,7 +209,7 @@ class Graph:
                     neighbour = edge.get_neighbour(current)
 
                     neighbour_to_curr = edge.get_incoming_channelinfo(current)
-                    edge_weight = neighbour_to_curr.calc_weight(amt)
+                    edge_weight = neighbour_to_curr.calc_weight(current_weight)
 
                     neighbour_weight = current_weight + edge_weight
 
