@@ -17,15 +17,16 @@ def build_node(g: nx.MultiGraph, n: int, const_amt: int) -> Tuple[int, List]:
     g.add_edge_with_init(new_node, e2)
 
     selected_edges = []
-    selected_edges.append((new_node, e1, g.get_fee(new_node, e1)))
-    selected_edges.append((new_node, e2, g.get_fee(new_node, e2)))
+    selected_edges.append((new_node, e1, g.get_fee(new_node, e1, 'prop_fee')))
+    selected_edges.append((new_node, e2, g.get_fee(new_node, e2, 'prop_fee')))
 
     # debugging
     for node in g.nodes:
         print('node {:d}\t:: neighbours {:s}'.format(
             node, ', '.join(map(lambda e: str(e), g[node]))))
 
-    while len(selected_edges) < n:
+    # 2 initial edges so routes can pass through new node
+    while len(selected_edges) < n + 2:
         max_reward = 0
         selected_channel = None
 
