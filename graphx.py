@@ -1,6 +1,6 @@
 import networkx as nx
 from node import NodeInfo, ChannelInfo
-from typing import List, Dict, Callable
+from typing import List, Dict, Tuple, Callable
 import random
 
 
@@ -11,9 +11,11 @@ def init_graph(n: int, d: int, seed=None) -> nx.MultiGraph:
     :param d:
     :return:
     """
+    import types
 
     # init barabasi-albert graph
-    g = nx.generators.random_graphs.barabasi_albert_graph(n, d, seed)
+    g: nx.MultiGraph = nx.generators.random_graphs.barabasi_albert_graph(
+        n, d, seed)
 
     # add node data to each node
     for _, data in g.nodes(data=True):
@@ -24,50 +26,65 @@ def init_graph(n: int, d: int, seed=None) -> nx.MultiGraph:
         data['{:d}to{:d}'.format(a, b)] = ChannelInfo.init_random()
         data['{:d}to{:d}'.format(b, a)] = ChannelInfo.init_random()
 
+    # add custom add_edge method to graph
+    g.add_edge_with_init = types.MethodType(_add_edge, g)
+    g.update_fee = types.MethodType(_update_fee, g)
+    g.get_fee = types.MethodType(_get_fee, g)
+
     return g
 
 
-def add_edge(g: nx.MultiGraph, a: int, b: int):
-    g.add_edge(a, b)
-    g.edges[a, b]['{:d}to{:d}'.format(a, b)] = ChannelInfo.init_random()
-    g.edges[a, b]['{:d}to{:d}'.format(b, a)] = ChannelInfo.init_random()
+def _add_edge(self, a: int, b: int):
+    self.add_edge(a, b)
+    self.edges[a, b]['{:d}to{:d}'.format(a, b)] = ChannelInfo.init_random()
+    self.edges[a, b]['{:d}to{:d}'.format(b, a)] = ChannelInfo.init_random()
 
 
-def update_fee(g: nx.MultiGraph, a: int, b: int, fee: int):
-    g[a][b]['{:d}to{:d}'.format(a, b)].base_fee = fee
+def _update_fee(self, a: int, b: int, fee: int, type: str):
+    if type == 'base_fee':
+        self[a][b]['{:d}to{:d}'.format(a, b)].base_fee = fee
+    elif type == 'prop_fee':
+        self[a][b]['{:d}to{:d}'.format(a, b)].prop_fee = fee
 
 
-def find_route(g: nx.MultiGraph, src: int, tgt: int, amt: int) -> List:
+def _get_fee(self, a: int, b: int, type: str) -> float:
+    if type == 'base_fee':
+        return self[a][b]['{:d}to{:d}'.format(a, b)].base_fee
+    elif type == 'prop_fee':
+        return self[a][b]['{:d}to{:d}'.format(a, b)].prop_fee
+
+
+def find_route(g: nx.MultiGraph, src: int, tgt: int, amt: int) -> Tuple[List, Dict]:
 
     # set starting weight to 0
     best_weight = {}
-    best_weight[tgt] = 0
+    best_weight[tgt] = amt
 
     # make weight function for use in dijkstra
-    def _weight_func(a: int, b: int, data: dict):
+    def _weight_func(a: int, b: int, data: dict) -> float:
         current_weight = best_weight[a]
 
         edge_data = data['{:d}to{:d}'.format(b, a)]
 
         if current_weight > edge_data.capacity:
-            edge_weight = float('inf')
+            fee = float('inf')
         else:
-            edge_weight = edge_data.calc_weight(current_weight)
-            new_weight = current_weight + edge_weight
+            fee = edge_data.calc_fee(current_weight)
+            new_weight = current_weight + fee
             if b not in best_weight or best_weight[b] > new_weight:
                 best_weight[b] = new_weight
 
-        return edge_weight
+        return fee
 
     # path find from transaction target to source
     # so that fees can be accumulated
-    path = nx.algorithms.shortest_paths.weighted.dijkstra_path(
+    path = nx.dijkstra_path(
         g, tgt, src, _weight_func)
 
-    return reversed(path)
+    return list(reversed(path)), best_weight
 
 
-def edge_betweenness(g: nx.MultiGraph, amt: int, normalized=True, exclude=None) -> int:
+def edge_betweenness(g: nx.MultiGraph, amt: int, normalized=True, count=None) -> int:
     """ Adapted from networkx.github.io/documentation/stable/_modules/networkx/algorithms/centrality/betweenness.html#edge_betweenness_centrality
     """
     def weight_function(u: int, v: int, current_weight: int) -> int:
@@ -75,38 +92,43 @@ def edge_betweenness(g: nx.MultiGraph, amt: int, normalized=True, exclude=None) 
         if current_weight > edge_data.capacity:
             return float('inf')
         else:
-            return edge_data.calc_weight(amt)
+            return edge_data.calc_fee(amt)
 
     # b[e]=0 for e in G.edges()
     betweenness = dict.fromkeys(g.edges, 0.0)
+    # add reverse edges, since the graph is undirected
     betweenness.update(dict.fromkeys(
         map(lambda e: (e[1], e[0]), g.edges()), 0.0))
 
-    # exclude paths that end at the new node
-    for node in filter(lambda n: n != exclude, g.nodes().keys()):
-        S, P, sigma = _single_target_dijkstra_path(g, node, weight_function)
+    for node in g.nodes():
+        # all shortest paths to one node
+        S, P, sigma = _single_target_dijkstra_path(
+            g, node, weight_function, amt)
 
-        betweenness = _accumulate_edge(betweenness, S, P, sigma, exclude)
+        # debugging
+        if count is not None:
+            for n in S:
+                _print_paths(n, P, count)
+
+        # count and sum up betweeness for each edge
+        betweenness = _accumulate_edge(betweenness, S, P, sigma)
+
+    # debugging
+    if count is not None:
+        print('{:d} out of {:d} edges'.format(count[2], count[3]))
 
     # rescale value
     if normalized:
         n = len(g)
-        if n <= 1:
-            scale = None
-        else:
+        if n > 1:
             scale = 1 / (n * (n - 1))
-    else:
-        # rescale by 2 for undirected graphs
-        scale = 1
-
-    if scale is not None:
-        for v in betweenness:
-            betweenness[v] *= scale
+            for v in betweenness:
+                betweenness[v] *= scale
 
     return betweenness
 
 
-def _single_target_dijkstra_path(g: nx.MultiGraph, s: int, weight: Callable[[int, int], int]):
+def _single_target_dijkstra_path(g: nx.MultiGraph, s: int, weight: Callable[[int, int], int], amt: int):
     import heapq
     from itertools import count
     S = []
@@ -121,7 +143,7 @@ def _single_target_dijkstra_path(g: nx.MultiGraph, s: int, weight: Callable[[int
     seen = {s: 0}
     c = count()
     Q = []   # use Q as heap with (distance,node id) tuples
-    push(Q, (0, next(c), s, s))
+    push(Q, (amt, next(c), s, s))
     while Q:
         (dist, _, pred, v) = pop(Q)
         if v in visited:
@@ -143,16 +165,13 @@ def _single_target_dijkstra_path(g: nx.MultiGraph, s: int, weight: Callable[[int
     return S, P, sigma
 
 
-def _accumulate_edge(betweenness: Dict, S: List, P: Dict, sigma: Dict, exclude_from: int):
+def _accumulate_edge(betweenness: Dict, S: List, P: Dict, sigma: Dict):
     delta = dict.fromkeys(S, 0)
     while S:
         w = S.pop()
 
-        # exclude paths that start from the new node
-        if w == exclude_from:
-            continue
-
-        # print_paths(w, P)
+        # debugging
+        # _print_paths(w, P)
 
         coeff = (1 + delta[w]) / sigma[w]
         for v in P[w]:
@@ -163,34 +182,24 @@ def _accumulate_edge(betweenness: Dict, S: List, P: Dict, sigma: Dict, exclude_f
     return betweenness
 
 
-def print_paths(src: int, P: Dict):
-    paths = find_paths(src, P)
+def _print_paths(src: int, P: Dict, edge: List = None):
+    paths = _find_paths(src, P)
     for p in paths:
+        if edge is not None:
+            edge[3] += 1
+            if str(edge[0]) not in p:
+                continue
+            else:
+                edge[2] += 1
         print(p)
 
 
-def find_paths(src: int, P: Dict) -> List[str]:
+def _find_paths(src: int, P: Dict) -> List[str]:
     multiple_paths = []
     if len(P[src]) != 0:
         for next in P[src]:
-            paths = find_paths(next, P)
+            paths = _find_paths(next, P)
             multiple_paths.extend(map(lambda p: str(src)+' '+p, paths))
     else:
         multiple_paths.append(str(src))
     return multiple_paths
-
-
-def ebc_manual_test(g: nx.MultiGraph = None, amt: int = 1000, exclude: int = None):
-    if g is None:
-        g = nx.read_gpickle('./graphstore')
-
-    # for node in g.nodes:
-    #     print('node {:d}\t:: neighbours {:s}'.format(
-    #         node, ', '.join(map(lambda e: str(e), g[node]))))
-
-    betweenness = edge_betweenness(g, amt, exclude)
-
-    for v in betweenness:
-        print('ebc ({:d}, {:d}) = {:f}'.format(v[0], v[1], betweenness[v]))
-
-    return betweenness

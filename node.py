@@ -30,7 +30,7 @@ class NodeInfo:
         total = lnd + c_lightning + eclair
 
         # set probability for each software type
-        NodeInfo.software_probability = dict(
+        cls.software_probability = dict(
             lnd=lnd/total, c_lightning=c_lightning/total, eclair=eclair/total)
 
     @classmethod
@@ -41,7 +41,8 @@ class NodeInfo:
 
         # pick software with weighted probability
         software = random.choices(list(cls.software_probability.keys()),
-                                  list(cls.software_probability.values()))
+                                  list(cls.software_probability.values()),
+                                  k=1)[0]
 
         return NodeInfo(software)
 
@@ -49,15 +50,13 @@ class NodeInfo:
 class ChannelInfo:
     '''
     Represents channel in lightning network.
-    Values are in Satoshi.
+    Values are in milliSatoshi.
     '''
 
-    # 2 USD (average of past values)
-    default_channel_cost = 17000
+    # 1.5 USD (average of past values)
+    default_channel_cost = 12000000
 
-    default_base_fee = 1
-    default_prop_fee_millionth = 1
-    default_capacity = 100000
+    policies: dict = None
 
     def __init__(self, capacity: int, base_fee: int, prop_fee_millionth: int, cltv_delta: int):
         self.capacity = capacity
@@ -66,34 +65,47 @@ class ChannelInfo:
         self.cltv_delta = cltv_delta
 
     @classmethod
-    def init_random(cls):
-        capacity = 100000 * (1.5 - random.random())
-        base_fee = random.choices([cls.default_base_fee, 0, random.random(), random.random()*30],
-                                  [0.45, 0.25, 0.2, 0.1], k=1)[0]
-        return ChannelInfo(cls.default_capacity, cls.default_base_fee, 1, 144)
-
-    @classmethod
-    def check_channel_fees(cls):
+    def init_policies(cls):
         import requests
         from collections import Counter
 
         res = requests.get(
-            'https://ln.bigsun.xyz/api/policies?select=base_fee_millisatoshi')
+            'https://ln.bigsun.xyz/api/policies?select=base_fee_millisatoshi,fee_per_millionth,delay')
 
-        print(res.status_code)
+        # count occurence of each policy
+        sampled_policies = Counter(str(p) for p in res.json())
 
-        base_fees = list(map(
-            lambda node: node['base_fee_millisatoshi'],
-            res.json()))
+        # top n policies will be sampled
+        n = 20
 
-        fees = Counter(base_fees).keys()
-        freq = Counter(base_fees).values()
+        # total freq of sampled policies
+        total = 0
+        for p in sampled_policies.most_common(n):
+            total += p[1]
 
-        # change freq to fraction of total
-        total = sum(freq)
-        freq = list(map(lambda f: f/total, freq))
+        # pick most common policies
+        policies = {}
+        for p in sampled_policies.most_common(n):
+            policies[p[0]] = p[1] / total
 
-        print(fees, freq, sep='\n')
+        cls.policies = policies
 
-    def calc_weight(self, amt: int):
-        return self.base_fee + (amt / 1000000) * self.prop_fee
+    @classmethod
+    def init_random(cls):
+        import re
+        if cls.policies is None:
+            cls.init_policies()
+
+        # pick a policy from the samples
+        policy = random.choices(list(cls.policies.keys()),
+                                list(cls.policies.values()), k=1)[0]
+        match = re.match(
+            "{'.*': ([0-9]+), '.*': ([0-9]+), '.*': ([0-9]+)}", policy)
+
+        return ChannelInfo(10000000, float(match[1]), float(match[2]), float(match[3]))
+
+    def calc_fee(self, amt: int):
+        """ LND weight function. Fee should be in millisatoshi.
+        """
+        fee = self.base_fee + (amt / 1000000) * self.prop_fee
+        return fee + amt * self.cltv_delta * 15 / 1000000000
