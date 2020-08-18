@@ -5,22 +5,25 @@ from node import NodeInfo, ChannelInfo
 import random
 
 
-def select_channels(g: nx.MultiGraph, n: int, const_amt: int) -> Tuple[int, List]:
+def build_node(g: nx.MultiGraph, n: int, const_amt: int) -> Tuple[int, List]:
     new_node = len(g)
     g.add_node(new_node, data=NodeInfo.init_random())
 
     # make initial channels for new node
     highest_degrees = sorted(
         g.nodes, key=lambda node: len(g[node]), reverse=True)
-    g.add_edge_with_init(new_node, highest_degrees[0])
-    g.add_edge_with_init(new_node, highest_degrees[1])
+    e1, e2 = highest_degrees[0:2]
+    g.add_edge_with_init(new_node, e1)
+    g.add_edge_with_init(new_node, e2)
+
+    selected_edges = []
+    selected_edges.append((new_node, e1, g.get_fee(new_node, e1)))
+    selected_edges.append((new_node, e2, g.get_fee(new_node, e2)))
 
     # debugging
     for node in g.nodes:
         print('node {:d}\t:: neighbours {:s}'.format(
             node, ', '.join(map(lambda e: str(e), g[node]))))
-
-    selected_edges = []
 
     while len(selected_edges) < n:
         max_reward = 0

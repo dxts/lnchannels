@@ -1,6 +1,6 @@
 import networkx as nx
 from graphx import init_graph, find_route, edge_betweenness
-from channel_selection import select_channels
+from channel_selection import build_node
 import random
 
 
@@ -13,32 +13,43 @@ def check_profit(node_count: int, node_degree: int, new_channel_count: int, amou
     """
     total_transac = 1000000
 
-    graph, new_node = build_node(
-        node_count, node_degree, new_channel_count, amount)
+    graph = init_graph(node_count, node_degree)
 
     # debugging
     for node in graph.nodes:
         print('node {:d}\t:: neighbours {:s}'.format(
             node, ', '.join(map(lambda e: str(e), graph[node]))))
 
-    # filter out new_node, as it will not be a source or target in a transaction
-    nodes = list(filter(lambda n: n != new_node, graph.nodes().keys()))
-
     transactions = []
     for _ in range(total_transac):
-        src, tgt = random.sample(nodes, 2)
+        src, tgt = random.sample(graph.nodes(), 2)
         transactions.append((src, tgt))
+
+    # select channels with greedy algo
+    new_node, channels = build_node(graph, new_channel_count, amount)
+
+    # debugging
+    print('greedy selected channels \t:: {:s}'.format(
+        ' ,'.join(map(lambda c: '({:d}, {:d}) - fee {:f}'.format(c[0], c[1], c[2]), channels))))
 
     _run_transactions(transactions, graph, new_node, amount)
 
+    # select channels randomly
     # clear edges
-    num_edges = len(graph[new_node])
     graph.remove_edges_from(
         list(map(lambda v: (new_node, v), graph[new_node].keys())))
-    # and make new edges
-    rand_nodes = random.sample(nodes, num_edges)
+    # and make new edges, to other nodes
+    rand_nodes = random.sample(list(filter(lambda n: n != new_node, graph.nodes().keys())),
+                               len(channels))
+    channels.clear()
     for target in rand_nodes:
         graph.add_edge_with_init(new_node, target)
+        channels.append(
+            (new_node, target, graph.get_fee(new_node, target, 'prop_fee')))
+
+    # debugging
+    print('randomly selected channels \t:: {:s}'.format(
+        ' ,'.join(map(lambda c: '({:d}, {:d}) - fee {:f}'.format(c[0], c[1], c[2]), channels))))
 
     _run_transactions(transactions, graph, new_node, amount)
 
@@ -59,18 +70,6 @@ def _run_transactions(transactions: list, graph: nx.MultiGraph, new_node: int, a
         profit, count * 100 / len(transactions)))
 
 
-def build_node(n: int, d: int, channel_count: int, amount: int):
-    graph = init_graph(n, d)
-
-    node, channels = select_channels(graph, channel_count, amount)
-
-    # debugging
-    print('selected channels \t:: {:s}'.format(
-        ' ,'.join(map(lambda c: '({:d}, {:d}) - fee {:f})'.format(c[0], c[1], c[2]), channels))))
-
-    return graph, node
-
-
 def ebc():
     import time
     graph = init_graph(1000, 2)
@@ -82,4 +81,4 @@ def ebc():
 
 
 if __name__ == '__main__':
-    check_profit(50, 2, 2, 1000000)
+    check_profit(20, 2, 2, 1000000)
