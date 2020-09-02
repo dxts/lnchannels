@@ -96,7 +96,7 @@ def check_profit(node_count: int, node_degree: int, new_channel_count: int):
 def _run_transactions(transactions: list, graph: nx.MultiGraph, new_node: int, amount: int):
 
     info = {'profit': {}, 'success': {}, 'failure': {}, 'failure_rev': {},
-            'total_count': 0, 'total_success': 0, 'no_path': 0}
+            'total_count': len(transactions), 'total_success': 0, 'no_path': 0}
 
     for neighbour in graph[new_node]:
         key1 = (new_node, neighbour)
@@ -124,6 +124,7 @@ def _run_transactions(transactions: list, graph: nx.MultiGraph, new_node: int, a
         except Exception:
             try:
                 _transact(graph, target, source, amount, new_node, info)
+                info['total_count'] += 1
                 # if passed, record info
                 info['failure_rev'][source, target] += 1
             except Exception:
@@ -146,7 +147,7 @@ def _run_transactions(transactions: list, graph: nx.MultiGraph, new_node: int, a
             info['profit'][key],
             succeded * 100 / info['total_count'],
             0 if failed == 0 else failed * 100 / (succeded + failed),
-            info['failure_rev'][key] * 100 / failed,
+            0 if failed == 0 else info['failure_rev'][key] * 100 / failed,
             graph.get_policy(key[0], key[1])
         ))
 
