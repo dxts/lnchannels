@@ -1,10 +1,10 @@
 import networkx as nx
-from node import NodeInfo, ChannelInfo
+from node import NodeInfo, ChannelPolicies
 from typing import List, Dict, Tuple, Callable
 import random
 
 
-def init_graph(n: int, d: int, seed=None) -> nx.MultiGraph:
+def init_graph(n: int, d: int, seed=None) -> nx.Graph:
     """
     Initialize graph with n nodes, and d degree for Albert-Barabasi.
     :param n:
@@ -14,7 +14,7 @@ def init_graph(n: int, d: int, seed=None) -> nx.MultiGraph:
     import types
 
     # init barabasi-albert graph
-    g: nx.MultiGraph = nx.generators.random_graphs.barabasi_albert_graph(
+    g: nx.Graph = nx.generators.random_graphs.barabasi_albert_graph(
         n, d, seed)
 
     # add node data to each node
@@ -23,21 +23,40 @@ def init_graph(n: int, d: int, seed=None) -> nx.MultiGraph:
 
     # add edge data to each edge
     for a, b, data in g.edges(data=True):
-        data['{:d}to{:d}'.format(a, b)] = ChannelInfo.init_random()
-        data['{:d}to{:d}'.format(b, a)] = ChannelInfo.init_random()
+        _init_edge(g, a, b)
 
     # add custom add_edge method to graph
-    g.add_edge_with_init = types.MethodType(_add_edge, g)
-    g.update_fee = types.MethodType(_update_fee, g)
-    g.get_fee = types.MethodType(_get_fee, g)
+    # g.add_edge_with_init = types.MethodType(_add_edge, g)
+    # g.update_fee = types.MethodType(_update_fee, g)
+    # g.get_policy = types.MethodType(_get_policy, g)
+
+    nx.Graph.add_edge_with_init = _add_edge
+    nx.Graph.update_fee = _update_fee
+    nx.Graph.get_policy = _get_policy
 
     return g
 
 
-def _add_edge(self, a: int, b: int):
+def _init_edge(g: nx.Graph,  a: int, b: int, default: bool = False):
+    a_to_b = '{:d}to{:d}'.format(a, b)
+    b_to_a = '{:d}to{:d}'.format(b, a)
+
+    if default:
+        g[a][b][a_to_b] = ChannelPolicies.init_default()
+    else:
+        g[a][b][a_to_b] = ChannelPolicies.init_random()
+
+    g.edges[a, b][b_to_a] = ChannelPolicies.init_random()
+
+    capacity = int(5000000 * random.random())
+    g[a][b]['capacity'] = capacity
+    g[a][b][a_to_b].balance = int(capacity / 2)
+    g[a][b][b_to_a].balance = int(capacity / 2)
+
+
+def _add_edge(self, a: int, b: int, default: bool = False):
     self.add_edge(a, b)
-    self.edges[a, b]['{:d}to{:d}'.format(a, b)] = ChannelInfo.init_random()
-    self.edges[a, b]['{:d}to{:d}'.format(b, a)] = ChannelInfo.init_random()
+    _init_edge(self, a, b, default)
 
 
 def _update_fee(self, a: int, b: int, fee: int, type: str):
@@ -47,18 +66,18 @@ def _update_fee(self, a: int, b: int, fee: int, type: str):
         self[a][b]['{:d}to{:d}'.format(a, b)].prop_fee = fee
 
 
-def _get_fee(self, a: int, b: int, type: str) -> float:
-    if type == 'base_fee':
-        return self[a][b]['{:d}to{:d}'.format(a, b)].base_fee
-    elif type == 'prop_fee':
-        return self[a][b]['{:d}to{:d}'.format(a, b)].prop_fee
+def _get_policy(self, a: int, b: int) -> float:
+    return self[a][b]['{:d}to{:d}'.format(a, b)]
 
 
-def find_route(g: nx.MultiGraph, src: int, tgt: int, amt: int) -> Tuple[List, Dict]:
+def find_route(g: nx.Graph, src: int, tgt: int, amt: int) -> Tuple[List, Dict, Dict]:
 
     # set starting weight to 0
     best_weight = {}
     best_weight[tgt] = amt
+
+    node_profit = {}
+    node_profit[tgt] = 0
 
     # make weight function for use in dijkstra
     def _weight_func(a: int, b: int, data: dict) -> float:
@@ -66,33 +85,45 @@ def find_route(g: nx.MultiGraph, src: int, tgt: int, amt: int) -> Tuple[List, Di
 
         edge_data = data['{:d}to{:d}'.format(b, a)]
 
-        if current_weight > edge_data.capacity:
-            fee = float('inf')
+        if current_weight > data['capacity']:
+            best_weight[b] = float('inf')
+            return float('inf')
         else:
             fee = edge_data.calc_fee(current_weight)
-            new_weight = current_weight + fee
+            risk_factor = edge_data.calc_risk(current_weight)
+
+            new_weight = current_weight + fee + risk_factor
             if b not in best_weight or best_weight[b] > new_weight:
                 best_weight[b] = new_weight
+                node_profit[b] = fee
 
-        return fee
+            return fee + risk_factor
 
     # path find from transaction target to source
     # so that fees can be accumulated
-    path = nx.dijkstra_path(
-        g, tgt, src, _weight_func)
+    try:
+        path = nx.dijkstra_path(g, tgt, src, _weight_func)
 
-    return list(reversed(path)), best_weight
+        # if path distance is inf, no path found
+        if best_weight[src] == float('inf'):
+            return None, None, None
+
+    except nx.NetworkXNoPath as err:
+        print(err)
+        return None, None, None
+
+    return list(reversed(path)), best_weight, node_profit
 
 
-def edge_betweenness(g: nx.MultiGraph, amt: int, normalized=True, count=None) -> int:
+def edge_betweenness(g: nx.Graph, amt: int, normalized=True, count=None) -> int:
     """ Adapted from networkx.github.io/documentation/stable/_modules/networkx/algorithms/centrality/betweenness.html#edge_betweenness_centrality
     """
     def weight_function(u: int, v: int, current_weight: int) -> int:
         edge_data = g[u][v]['{:d}to{:d}'.format(u, v)]
-        if current_weight > edge_data.capacity:
+        if current_weight > g[u][v]['capacity']:
             return float('inf')
         else:
-            return edge_data.calc_fee(amt)
+            return edge_data.calc_fee(amt) + edge_data.calc_risk(amt)
 
     # b[e]=0 for e in G.edges()
     betweenness = dict.fromkeys(g.edges, 0.0)
@@ -128,7 +159,7 @@ def edge_betweenness(g: nx.MultiGraph, amt: int, normalized=True, count=None) ->
     return betweenness
 
 
-def _single_target_dijkstra_path(g: nx.MultiGraph, s: int, weight: Callable[[int, int], int], amt: int):
+def _single_target_dijkstra_path(g: nx.Graph, s: int, weight: Callable[[int, int], int], amt: int):
     import heapq
     from itertools import count
     S = []

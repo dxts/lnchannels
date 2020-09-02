@@ -9,8 +9,9 @@ class NodeInfo:
 
     software_probability: dict = None
 
-    def __init__(self, software: str):
+    def __init__(self, software: str, capacity: float):
         self.software = software
+        self.capacity = capacity
 
     @classmethod
     def init_software_probability(cls):
@@ -44,25 +45,28 @@ class NodeInfo:
                                   list(cls.software_probability.values()),
                                   k=1)[0]
 
-        return NodeInfo(software)
+        return NodeInfo(software, 10000000)
 
 
-class ChannelInfo:
+class ChannelPolicies:
     '''
     Represents channel in lightning network.
-    Values are in milliSatoshi.
+    Base fee is in milliSatoshi.
     '''
 
     # 1.5 USD (average of past values)
-    default_channel_cost = 12000000
+    default_channel_cost = 12000
 
     policies: dict = None
 
-    def __init__(self, capacity: int, base_fee: int, prop_fee_millionth: int, cltv_delta: int):
-        self.capacity = capacity
+    def __init__(self, base_fee: int, prop_fee_millionth: int, cltv_delta: int):
         self.base_fee = base_fee
         self.prop_fee = prop_fee_millionth
         self.cltv_delta = cltv_delta
+        self.balance = 0
+
+    def __str__(self):
+        return f'b - {self.base_fee:,.0f} p - {self.prop_fee:,.0f} cltv - {self.cltv_delta:,.0f} balance - {self.balance:,.0f}'
 
     @classmethod
     def init_policies(cls):
@@ -83,10 +87,13 @@ class ChannelInfo:
         for p in sampled_policies.most_common(n):
             total += p[1]
 
+        print('sampled policies :')
+
         # pick most common policies
         policies = {}
         for p in sampled_policies.most_common(n):
             policies[p[0]] = p[1] / total
+            print(f'\t{p}')
 
         cls.policies = policies
 
@@ -102,10 +109,16 @@ class ChannelInfo:
         match = re.match(
             "{'.*': ([0-9]+), '.*': ([0-9]+), '.*': ([0-9]+)}", policy)
 
-        return ChannelInfo(10000000, float(match[1]), float(match[2]), float(match[3]))
+        return ChannelPolicies(float(match[1]), float(match[2]), float(match[3]))
+
+    @classmethod
+    def init_default(cls):
+        return ChannelPolicies(1, 1, 144)
 
     def calc_fee(self, amt: int):
-        """ LND weight function. Fee should be in millisatoshi.
+        """ Amount should be in satoshi.
         """
-        fee = self.base_fee + (amt / 1000000) * self.prop_fee
-        return fee + amt * self.cltv_delta * 15 / 1000000000
+        return (self.base_fee / 1000) + (amt / 1000000) * self.prop_fee
+
+    def calc_risk(self, amt: int):
+        return amt * self.cltv_delta * 15 / 1000000000

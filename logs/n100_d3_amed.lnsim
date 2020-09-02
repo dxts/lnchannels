@@ -1,0 +1,2 @@
+First run, greedy algo starts with two channels to the highest degree nodes with default fees.
+Second run, greedy algo starts with two channels to two median degree nodes with default fees.
