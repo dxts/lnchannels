@@ -20,7 +20,7 @@ def build_node(g: nx.MultiGraph, new_node: int, n: int, const_amt: int, fee_type
                 continue
 
             # create new channel
-            g.add_edge_with_init(new_node, node)
+            g.add_edge_with_init(new_node, node, default=True)
             # calculate max reward
             reward, fee = maximise_fee(
                 g, (new_node, node), const_amt, fee_type)
@@ -34,8 +34,7 @@ def build_node(g: nx.MultiGraph, new_node: int, n: int, const_amt: int, fee_type
             g.remove_edge(new_node, node)
 
         if best_channel is None:
-            print('-- No channel produced any reward -- (channel selection exiting..)')
-            return selected
+            raise Exception('Profit not possible.')
 
         # add selected channel and redo for next channel
         selected.append((new_node, best_channel[0], best_channel[1]))

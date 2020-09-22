@@ -43,15 +43,10 @@ def _init_edge(g: nx.Graph,  a: int, b: int, default: bool = False):
 
     if default:
         g[a][b][a_to_b] = ChannelPolicies.init_default()
+        g[a][b][b_to_a] = ChannelPolicies.init_default()
     else:
         g[a][b][a_to_b] = ChannelPolicies.init_random()
-
-    g.edges[a, b][b_to_a] = ChannelPolicies.init_random()
-
-    capacity = int(5000000 * random.random())
-    g[a][b]['capacity'] = capacity
-    g[a][b][a_to_b].balance = int(capacity / 2)
-    g[a][b][b_to_a].balance = int(capacity / 2)
+        g[a][b][b_to_a] = ChannelPolicies.init_random()
 
 
 def _add_edge(self, a: int, b: int, default: bool = False):
@@ -85,7 +80,7 @@ def find_route(g: nx.Graph, src: int, tgt: int, amt: int) -> Tuple[List, Dict, D
 
         edge_data = data['{:d}to{:d}'.format(b, a)]
 
-        if current_weight > data['capacity']:
+        if current_weight > edge_data.balance:
             best_weight[b] = float('inf')
             return float('inf')
         else:
@@ -120,7 +115,7 @@ def edge_betweenness(g: nx.Graph, amt: int, normalized=True, count=None) -> int:
     """
     def weight_function(u: int, v: int, current_weight: int) -> int:
         edge_data = g[u][v]['{:d}to{:d}'.format(u, v)]
-        if current_weight > g[u][v]['capacity']:
+        if current_weight > edge_data.balance:
             return float('inf')
         else:
             return edge_data.calc_fee(amt) + edge_data.calc_risk(amt)

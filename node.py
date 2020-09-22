@@ -45,7 +45,7 @@ class NodeInfo:
                                   list(cls.software_probability.values()),
                                   k=1)[0]
 
-        return NodeInfo(software, 10000000)
+        return NodeInfo(software, 100000000000000)
 
 
 class ChannelPolicies:
@@ -59,14 +59,16 @@ class ChannelPolicies:
 
     policies: dict = None
 
-    def __init__(self, base_fee: int, prop_fee_millionth: int, cltv_delta: int):
+    balances: list = None
+
+    def __init__(self, base_fee: int, prop_fee_millionth: int, cltv_delta: int, balance: int):
         self.base_fee = base_fee
         self.prop_fee = prop_fee_millionth
         self.cltv_delta = cltv_delta
-        self.balance = 0
+        self.balance = balance
 
     def __str__(self):
-        return f'b - {self.base_fee:,.0f} p - {self.prop_fee:,.0f} cltv - {self.cltv_delta:,.0f} balance - {self.balance:,.0f}'
+        return f'b - {self.base_fee:5,.0f} mast  p - {self.prop_fee:5,.0f}  cltv - {self.cltv_delta:4,.0f}  balance - {self.balance:,.0f}'
 
     @classmethod
     def init_policies(cls):
@@ -87,15 +89,23 @@ class ChannelPolicies:
         for p in sampled_policies.most_common(n):
             total += p[1]
 
-        print('sampled policies :')
-
         # pick most common policies
         policies = {}
         for p in sampled_policies.most_common(n):
             policies[p[0]] = p[1] / total
-            print(f'\t{p}')
 
         cls.policies = policies
+
+        # sample channel balances
+        res = requests.get(
+            'https://ln.bigsun.xyz/api/channels?select=satoshis')
+        balances = list(map(lambda c: c['satoshis'], res.json()))
+
+        # get highest 50% balances
+        balances.sort()
+        cls.balances = balances[int(len(balances)/2):]
+
+        return
 
     @classmethod
     def init_random(cls):
@@ -109,11 +119,16 @@ class ChannelPolicies:
         match = re.match(
             "{'.*': ([0-9]+), '.*': ([0-9]+), '.*': ([0-9]+)}", policy)
 
-        return ChannelPolicies(float(match[1]), float(match[2]), float(match[3]))
+        base_fee, prop_fee, cltv_delta = map(
+            lambda x: float(x), match.group(1, 2, 3))
+
+        balance = random.choice(cls.balances)
+
+        return ChannelPolicies(base_fee, prop_fee, cltv_delta, balance)
 
     @classmethod
     def init_default(cls):
-        return ChannelPolicies(1, 1, 144)
+        return ChannelPolicies(1, 1, 144, 5000000)
 
     def calc_fee(self, amt: int):
         """ Amount should be in satoshi.
